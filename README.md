@@ -33,3 +33,4 @@ Run the tests with `python manage.py test`.
   Also move the `ONLINE` presence dict in `chat/consumers.py` into Redis.
 - Run with `daphne config.asgi:application` behind HTTPS (the client switches to `wss://` automatically)
 # secret_room
+# secret_room

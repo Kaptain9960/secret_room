@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ code }} · Secret room{% endblock %}
+{% block body_class %}room-page{% endblock %}
+
+{% block content %}
+<div class="room">
+  <header class="room-bar">
+    <a href="{% url 'home' %}" class="brand" title="Leave room">Secret room</a>
+    <span class="code">{{ code }}</span>
+    <div class="ms-auto d-flex align-items-center gap-3">
+      <span class="status" id="status">Connecting</span>
+      <button id="copy-link" type="button" class="btn btn-sm btn-outline-light">Copy invite link</button>
+    </div>
+  </header>
+
+  <div class="room-body">
+    <aside class="people d-none d-md-flex">
+      <h2>In the room <span id="count" class="count">0</span></h2>
+      <ul id="people" class="list-unstyled m-0"></ul>
+    </aside>
+
+    <main class="chat">
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <div id="typing" class="typing" aria-live="polite"></div>
+      <form id="composer" class="composer">
+        <textarea id="input" class="form-control" rows="1" maxlength="1000"
+                  placeholder="Write a message. Enter sends, Shift+Enter adds a line." autocomplete="off"></textarea>
+        <button class="btn btn-send" type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+</div>
+
+{{ code|json_script:"room-code" }}
+{{ username|json_script:"me" }}
+{% endblock %}
+
+{% block scripts %}<script src="{% static 'js/room.js' %}"></script>{% endblock %}

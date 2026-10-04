@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="door container">
+  <div class="door-inner">
+    <svg class="keyhole" viewBox="0 0 40 56" width="44" height="62" aria-hidden="true">
+      <path d="M20 2a14 14 0 0 0-6.6 26.3L8 54h24l-5.4-25.7A14 14 0 0 0 20 2Z" fill="currentColor"/>
+    </svg>
+    <h1 class="display-title">Secret room</h1>
+    <p class="lead-copy">Choose a name and a room code. Anyone who has the code can walk in, and no one else can find it.</p>
+
+    {% if error %}<div class="alert alert-danger py-2" role="alert">{{ error }}</div>{% endif %}
+
+    <form method="post" class="door-form" novalidate>
+      {% csrf_token %}
+      <label for="username" class="form-label">Your name</label>
+      <input id="username" name="username" class="form-control form-control-lg mb-3" maxlength="20"
+             value="{{ username }}" autocomplete="nickname" required autofocus>
+
+      <label for="room" class="form-label">Room code</label>
+      <div class="input-group input-group-lg mb-4">
+        <input id="room" name="room" class="form-control" maxlength="40" value="{{ room }}"
+               autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        <button type="button" id="new-code" class="btn btn-outline-light">New code</button>
+      </div>
+
+      <button class="btn btn-enter btn-lg w-100" type="submit">Enter room</button>
+    </form>
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const pick = () => Array.from(crypto.getRandomValues(new Uint8Array(3)), n => alphabet[n % alphabet.length]).join("");
+  document.getElementById("new-code").addEventListener("click", () => {
+    document.getElementById("room").value = pick() + "-" + pick();
+  });
+</script>
+{% endblock %}

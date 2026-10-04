@@ -71,3 +71,4 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 CSRF_TRUSTED_ORIGINS = ["https://*.vercel.app"]
+SESSION_ENGINE = "django.contrib.sessions.backends.signed_cookies"

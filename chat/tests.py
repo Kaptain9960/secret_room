@@ -1,61 +1,55 @@
-from channels.testing import WebsocketCommunicator
-from django.test import Client, TransactionTestCase
+import json
+
+from django.test import Client, TestCase
 
 from chat.models import Message
-from channels.routing import URLRouter
-
-from chat.routing import websocket_urlpatterns
-
-# Test the consumer directly; the real stack adds session + origin middleware.
-application = URLRouter(websocket_urlpatterns)
 
 
-def make(username, code="abc-123"):
-    comm = WebsocketCommunicator(application, f"/ws/room/{code}/")
-    comm.scope["session"] = {"username": username}
-    return comm
 
 
-class RoomTests(TransactionTestCase):
-    def test_home_and_join_flow(self):
+class RoomTests(TestCase):
+    def login(self, name, room="abc-123"):
         c = Client()
-        self.assertEqual(c.get("/").status_code, 200)
-        r = c.post("/", {"username": "Ada", "room": "abc-123"})
-        self.assertRedirects(r, "/room/abc-123/")
-        self.assertEqual(c.get("/room/abc-123/").status_code, 200)
-        self.assertEqual(Client().get("/room/abc-123/").status_code, 302)  # no name yet
+        self.assertRedirects(c.post("/", {"username": name, "room": room}), f"/room/{room}/")
+        return c
 
-    def test_bad_input_rejected(self):
-        r = Client().post("/", {"username": "x", "room": "A B"})
-        self.assertContains(r, "Pick a name")
+    def post(self, c, path, data):
+        return c.post(path, json.dumps(data), content_type="application/json")
 
-    async def test_two_users_chat_and_history(self):
-        a, b = make("Ada"), make("Bo")
-        self.assertTrue((await a.connect())[0])
-        self.assertEqual((await a.receive_json_from())["type"], "history")
-        self.assertEqual((await a.receive_json_from())["users"], ["Ada"])
+    def test_pages_and_validation(self):
+        self.assertEqual(Client().get("/").status_code, 200)
+        self.assertContains(Client().post("/", {"username": "x", "room": "A B"}), "Pick a name")
+        self.assertEqual(Client().get("/room/abc-123/").status_code, 302)  # needs a name first
 
-        self.assertTrue((await b.connect())[0])
-        await b.receive_json_from()  # history
-        self.assertEqual((await b.receive_json_from())["users"], ["Ada", "Bo"])
-        await a.receive_json_from()  # presence update for Ada
+    def test_api_requires_name(self):
+        self.assertEqual(Client().get("/api/room/abc-123/poll/").status_code, 401)
+        self.assertEqual(self.post(Client(), "/api/room/abc-123/send/", {"content": "hi"}).status_code, 401)
 
-        await a.send_json_to({"type": "message", "content": "<b>hi</b>"})
-        got = await b.receive_json_from()
-        self.assertEqual((got["type"], got["username"], got["content"]), ("message", "Ada", "<b>hi</b>"))
-        self.assertEqual(await Message.objects.acount(), 1)
+    def test_send_poll_presence_typing(self):
+        ada, bo = self.login("Ada"), self.login("Bo")
+        self.assertEqual(ada.get("/api/room/abc-123/poll/").json()["messages"], [])
+        bo.get("/api/room/abc-123/poll/")
 
-        await a.disconnect()
-        await b.disconnect()
+        r = self.post(ada, "/api/room/abc-123/send/", {"content": "<b>hi</b>"})
+        self.assertEqual(r.status_code, 201)
 
-        c = make("Cy")
-        await c.connect()
-        hist = await c.receive_json_from()
-        self.assertEqual(hist["messages"][0]["content"], "<b>hi</b>")
-        await c.disconnect()
+        data = bo.get("/api/room/abc-123/poll/?after=0").json()
+        self.assertEqual([m["content"] for m in data["messages"]], ["<b>hi</b>"])
+        self.assertEqual(data["users"], ["Ada", "Bo"])
+        last = data["messages"][-1]["id"]
+        self.assertEqual(bo.get(f"/api/room/abc-123/poll/?after={last}").json()["messages"], [])
 
-    async def test_no_username_rejected(self):
-        comm = WebsocketCommunicator(application, "/ws/room/abc-123/")
-        comm.scope["session"] = {}
-        connected, _ = await comm.connect()
-        self.assertFalse(connected)
+        self.post(ada, "/api/room/abc-123/typing/", {})
+        self.assertEqual(bo.get(f"/api/room/abc-123/poll/?after={last}").json()["typing"], ["Ada"])
+
+    def test_empty_rate_limit_and_rooms_isolated(self):
+        ada = self.login("Ada")
+        self.assertEqual(self.post(ada, "/api/room/abc-123/send/", {"content": "   "}).status_code, 400)
+        self.assertEqual(self.post(ada, "/api/room/abc-123/send/", {"content": "one"}).status_code, 201)
+        self.assertEqual(self.post(ada, "/api/room/abc-123/send/", {"content": "two"}).status_code, 429)
+        self.assertEqual(Message.objects.filter(room="other-room").count(), 0)
+        self.assertEqual(ada.get("/api/room/other-room/poll/").json()["messages"], [])
+
+    def test_csrf_enforced(self):
+        c = Client(enforce_csrf_checks=True)
+        self.assertEqual(c.post("/api/room/abc-123/send/", "{}", content_type="application/json").status_code, 403)

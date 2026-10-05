@@ -1,25 +1,24 @@
 (() => {
   const code = JSON.parse(document.getElementById("room-code").textContent);
   const me = JSON.parse(document.getElementById("me").textContent);
+  const csrf = JSON.parse(document.getElementById("csrf").textContent);
+  const base = `/api/room/${code}`;
 
   const $ = (id) => document.getElementById(id);
-  const list = $("messages"), input = $("input"), form = $("composer");
+  const list = $("messages"), input = $("input"), form = $("composer"), sendBtn = form.querySelector("button");
   const statusEl = $("status"), peopleEl = $("people"), countEl = $("count"), typingEl = $("typing");
 
-  let socket, retries = 0, lastAuthor = null, lastTypingSent = 0;
-  const typers = new Map(); // username -> timeout id
+  let lastId = 0, lastAuthor = null, lastTypingSent = 0, busy = false;
+  const seen = new Set();
 
-  function connect() {
-    const scheme = location.protocol === "https:" ? "wss" : "ws";
-    socket = new WebSocket(`${scheme}://${location.host}/ws/room/${code}/`);
-
-    socket.onopen = () => { retries = 0; setStatus("Connected", true); };
-    socket.onclose = (e) => {
-      if (e.code === 4401) { location.href = "/?room=" + code; return; }
-      setStatus("Reconnecting", false);
-      setTimeout(connect, Math.min(1000 * 2 ** retries++, 10000));
-    };
-    socket.onmessage = (e) => handle(JSON.parse(e.data));
+  async function api(path, options = {}) {
+    const res = await fetch(base + path, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+      ...options,
+    });
+    if (res.status === 401) { location.href = "/?room=" + code; throw new Error("no session"); }
+    return res;
   }
 
   function setStatus(text, on) {
@@ -27,23 +26,27 @@
     statusEl.classList.toggle("on", on);
   }
 
-  function handle(data) {
-    if (data.type === "history") {
-      list.replaceChildren();
-      lastAuthor = null;
-      if (!data.messages.length) showEmpty();
-      data.messages.forEach((m) => addMessage(m));
-      list.scrollTop = list.scrollHeight;
-    } else if (data.type === "message") {
+  // ---- polling loop: asks the server for anything new, then waits and repeats ----
+  async function poll() {
+    try {
+      const res = await api(`/poll/?after=${lastId}`);
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      const first = lastId === 0;
+
+      if (first) { list.replaceChildren(); lastAuthor = null; }
       const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
-      clearTyper(data.username);
-      addMessage(data);
-      if (nearBottom || data.username === me) list.scrollTop = list.scrollHeight;
-    } else if (data.type === "presence") {
+      data.messages.forEach((m) => addMessage(m));
+      if (first && !data.messages.length) showEmpty();
+      if (first || (data.messages.length && nearBottom)) list.scrollTop = list.scrollHeight;
+
       renderPeople(data.users);
-    } else if (data.type === "typing") {
-      showTyper(data.username);
+      renderTyping(data.typing);
+      setStatus("Connected", true);
+    } catch (err) {
+      setStatus("Reconnecting", false);
     }
+    setTimeout(poll, document.hidden ? 5000 : 1500);
   }
 
   function showEmpty() {
@@ -55,6 +58,9 @@
   }
 
   function addMessage(m) {
+    if (seen.has(m.id)) return;
+    seen.add(m.id);
+    lastId = Math.max(lastId, m.id);
     const empty = $("empty");
     if (empty) empty.remove();
 
@@ -91,28 +97,33 @@
     }));
   }
 
-  function showTyper(name) {
-    clearTimeout(typers.get(name));
-    typers.set(name, setTimeout(() => clearTyper(name), 3000));
-    renderTyping();
-  }
-  function clearTyper(name) {
-    clearTimeout(typers.get(name));
-    typers.delete(name);
-    renderTyping();
-  }
-  function renderTyping() {
-    const names = [...typers.keys()];
+  function renderTyping(names) {
     typingEl.textContent = !names.length ? "" :
       names.length === 1 ? `${names[0]} is typing…` : `${names.join(", ")} are typing…`;
   }
 
-  function send() {
+  async function send() {
     const text = input.value.trim();
-    if (!text || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "message", content: text }));
-    input.value = "";
-    input.style.height = "auto";
+    if (!text || busy) return;
+    busy = true; sendBtn.disabled = true;
+    try {
+      const res = await api("/send/", { method: "POST", body: JSON.stringify({ content: text }) });
+      if (res.ok) {
+        addMessage(await res.json());
+        input.value = "";
+        input.style.height = "auto";
+        list.scrollTop = list.scrollHeight;
+        setStatus("Connected", true);
+      } else if (res.status === 403) {
+        setStatus("Session expired. Reload the page.", false);
+      } else if (res.status !== 429) {
+        setStatus("Message not sent. Try again.", false);
+      }
+    } catch (err) {
+      setStatus("Message not sent. Check your connection.", false);
+    } finally {
+      busy = false; sendBtn.disabled = false; input.focus();
+    }
   }
 
   form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
@@ -123,9 +134,9 @@
     input.style.height = "auto";
     input.style.height = input.scrollHeight + "px";
     const now = Date.now();
-    if (now - lastTypingSent > 2000 && socket.readyState === WebSocket.OPEN) {
+    if (now - lastTypingSent > 2000) {
       lastTypingSent = now;
-      socket.send(JSON.stringify({ type: "typing" }));
+      api("/typing/", { method: "POST", body: "{}" }).catch(() => {});
     }
   });
 
@@ -138,6 +149,6 @@
     setTimeout(() => (btn.textContent = old), 1500);
   });
 
-  connect();
+  poll();
   input.focus();
 })();

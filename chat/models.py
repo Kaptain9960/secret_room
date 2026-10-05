@@ -15,7 +15,20 @@ class Message(models.Model):
 
     def as_dict(self):
         return {
+            "id": self.id,
             "username": self.username,
             "content": self.content,
             "time": self.created_at.isoformat(),
         }
+
+
+class Presence(models.Model):
+    """Who is in a room right now: refreshed every time their browser polls."""
+
+    room = models.CharField(max_length=40)
+    username = models.CharField(max_length=20)
+    last_seen = models.DateTimeField()
+    typing_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = [("room", "username")]

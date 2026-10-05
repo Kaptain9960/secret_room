@@ -34,6 +34,7 @@
 
 {{ code|json_script:"room-code" }}
 {{ username|json_script:"me" }}
+{{ csrf|json_script:"csrf" }}
 {% endblock %}
 
 {% block scripts %}<script src="{% static 'js/room.js' %}"></script>{% endblock %}
